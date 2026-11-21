@@ -109,8 +109,7 @@ function betMarkup(item) {
 function renderBoard() {
   const [main, ...other] = TABLES[game];
   $('main-bets').innerHTML = '<div class="bet-grid main-grid">' + main.bets.map(betMarkup).join('') + '</div>';
-  $('advanced-count').textContent = other.reduce((sum, item) => sum + item.bets.length, 0) + ' 项';
-  $('side-bets').innerHTML = other.map(group => '<section class="bet-group"><h3>' + group.label + '</h3><p>' +
+  $('side-bets').innerHTML = other.map(group => '<section class="bet-group"><h4>' + group.label + '</h4><p>' +
     group.rule + '</p><div class="bet-grid">' + group.bets.map(betMarkup).join('') + '</div></section>').join('');
 }
 
@@ -285,7 +284,6 @@ document.querySelector('.game-tabs').addEventListener('click', event => {
   const button = event.target.closest('[data-game]');
   if (!button || pending || game === button.dataset.game) return;
   game = button.dataset.game;
-  $('advanced').open = false;
   notice = '';
   render();
 });

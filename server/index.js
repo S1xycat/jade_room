@@ -22,7 +22,6 @@ try {
 
 const rooms = createRooms({
   initial,
-  intervalSeconds: Number(process.env.ROUND_INTERVAL_SECONDS ?? 30),
   save(state) {
     const temporary = stateFile + '.tmp';
     writeFileSync(temporary, JSON.stringify(state), { mode: 0o600, flush: true });

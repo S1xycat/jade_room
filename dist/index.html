@@ -7,8 +7,8 @@
   <meta name="description" content="个人积分游戏桌，包含百家乐与骰宝。">
   <title>青玉桌 · 每日积分游戏</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%231f3d2c'/%3E%3Ctext x='24' y='36' text-anchor='middle' font-size='33' fill='%23edd39b'%3E%E2%99%A0%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./style.css?v=accounts1">
-  <script type="module" src="./app.js?v=accounts1"></script>
+  <link rel="stylesheet" href="./style.css?v=round20">
+  <script type="module" src="./app.js?v=round20"></script>
 </head>
 <body>
   <header class="topbar">
@@ -71,10 +71,10 @@
             <div id="chips" class="chips"></div>
           </div>
           <div id="main-bets"></div>
-          <details id="advanced">
-            <summary>点数与组合 <span id="advanced-count"></span></summary>
+          <section class="side-bets" aria-labelledby="side-bets-title">
+            <h3 id="side-bets-title">点数与组合</h3>
             <div id="side-bets"></div>
-          </details>
+          </section>
         </div>
       </section>
       <aside class="sidebar" aria-label="积分和结算">

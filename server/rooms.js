@@ -2,6 +2,8 @@ import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { BETS, DAILY_POINTS, GAMES, dayKey, dealBaccarat, makeShoe, rollDice, settle } from '../dist/rules.js';
 import { SESSION_SECONDS } from './accounts.js';
 
+const intervalSeconds = 20;
+const duration = intervalSeconds * 1_000;
 const lockMs = 3_000;
 const games = Object.keys(GAMES);
 const emptyTicket = { version: 0, stakes: {} };
@@ -20,13 +22,10 @@ export class RequestError extends Error {
   }
 }
 
-export function createRooms({ initial, save, intervalSeconds = 30, now = Date.now, random = randomInt }) {
-  if (![20, 30].includes(intervalSeconds)) throw new Error('ROUND_INTERVAL_SECONDS must be 20 or 30');
-  const duration = intervalSeconds * 1_000;
-  const nextDeadline = time => (Math.floor(time / duration) + 1) * duration;
-  const nextRound = (time, id) => {
-    const deadline = nextDeadline(time);
-    return { id, startsAt: deadline - duration, closesAt: deadline - lockMs, revealAt: deadline, tickets: {} };
+export function createRooms({ initial, save, now = Date.now, random = randomInt }) {
+  const nextRound = (startsAt, id) => {
+    const revealAt = startsAt + duration;
+    return { id, startsAt, closesAt: revealAt - lockMs, revealAt, tickets: {} };
   };
   const start = now();
   if (initial && ![undefined, 2].includes(initial.schema)) throw new Error('Unsupported state schema');
@@ -74,7 +73,8 @@ export function createRooms({ initial, save, intervalSeconds = 30, now = Date.no
         player.balance += payout.returned;
         player.history = [{ ...result, ...payout }, ...player.history].slice(0, 100);
       }
-      room.current = nextRound(time, current.id + 1);
+      const startsAt = current.revealAt + Math.floor((time - current.revealAt) / duration) * duration;
+      room.current = nextRound(startsAt, current.id + 1);
     }
     if (next.day < date) {
       const days = dayNumber(date) - dayNumber(next.day);

@@ -86,10 +86,10 @@ h3 { font-size: 1rem; }
 .bet:hover { border-color: #a9ae8d; }
 .bet[aria-pressed=true] { border-color: var(--gold); }
 .bet b { color: #201b13; background: var(--gold); border-radius: 5px; padding: 1px 4px; font-size: .79rem; }
-#advanced { margin-top: 15px; border-top: 1px solid var(--line); }
-#advanced summary { cursor: pointer; padding-top: 13px; color: var(--gold); font-weight: 700; }
-#advanced summary span { margin-left: 6px; font-size: .85rem; color: var(--muted); font-weight: 400; }
+.side-bets { margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--line); }
+.side-bets h3 { color: var(--gold); }
 .bet-group { margin-top: 16px; }
+.bet-group h4 { margin: 0; font-size: 1rem; }
 .bet-group p { color: var(--muted); font-size: .875rem; line-height: 1.5; margin: 5px 0 9px; }
 .chip-row { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; }
 .small-label { color: var(--muted); font-size: .875rem; }
