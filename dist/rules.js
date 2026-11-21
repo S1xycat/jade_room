@@ -1,5 +1,5 @@
 export const DAILY_POINTS = 100_000;
-export const DENOMINATIONS = [10, 25, 50];
+export const DENOMINATIONS = [10, 25, 50, 100, 200, 500];
 export const GAMES = {
   baccarat: { name: '百家乐', action: '发牌', prompt: '选择庄、闲、和，或展开更多下注。' },
   dice: { name: '骰宝', action: '掷骰', prompt: '选择大、小，或展开点数和组合。' },

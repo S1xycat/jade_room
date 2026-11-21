@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createRooms, RequestError } from './rooms.js';
+import { checkPassword, hashPassword, loginName, rateLimiter, SESSION_SECONDS, validPassword } from './accounts.js';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -29,7 +30,29 @@ const rooms = createRooms({
   },
 });
 
-const clients = new Set();
+if (process.env.JADE_ADMIN_USERNAME && !rooms.hasAdmin()) {
+  const account = loginName(process.env.JADE_ADMIN_USERNAME);
+  const password = process.env.JADE_ADMIN_PASSWORD_FILE
+    ? readFileSync(process.env.JADE_ADMIN_PASSWORD_FILE, 'utf8').replace(/\r?\n$/, '')
+    : process.env.JADE_ADMIN_PASSWORD;
+  if (!account || !validPassword(password)) throw new Error('Invalid administrator bootstrap credentials');
+  rooms.createAccount(account.name, await hashPassword(password), 'admin');
+}
+
+const clients = new Map();
+const allowAuth = rateLimiter();
+const sessionKey = 'jade_session';
+function sessionToken(request) {
+  const cookies = String(request.headers.cookie ?? '').split(';');
+  return cookies.map(cookie => cookie.trim()).find(cookie => cookie.startsWith(sessionKey + '='))?.slice(sessionKey.length + 1);
+}
+
+function cookie(request, token, seconds) {
+  const directLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(request.headers.host ?? '') &&
+    !request.headers['x-forwarded-proto'];
+  return sessionKey + '=' + token + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + seconds + (directLocal ? '' : '; Secure');
+}
+
 function sendSnapshot(response, snapshot) {
   if (response.writableNeedDrain) {
     response.destroy();
@@ -38,8 +61,17 @@ function sendSnapshot(response, snapshot) {
   response.write('data: ' + JSON.stringify(snapshot) + '\n\n');
 }
 
-function broadcast(snapshot = rooms.snapshot()) {
-  for (const response of clients) sendSnapshot(response, snapshot);
+function getClient(response, token) {
+  const account = rooms.session(token);
+  if (!account) response.end('event: signed-out\ndata: {}\n\n');
+  return account;
+}
+
+function broadcast() {
+  for (const [response, token] of clients) {
+    const account = getClient(response, token);
+    if (account) sendSnapshot(response, rooms.snapshot(account.id));
+  }
 }
 
 function tick() {
@@ -52,7 +84,8 @@ const timer = setInterval(() => {
 }, 200);
 
 const heartbeat = setInterval(() => {
-  for (const response of clients) {
+  for (const [response, token] of clients) {
+    if (!getClient(response, token)) continue;
     if (response.writableNeedDrain) response.destroy();
     else response.write(': heartbeat\n\n');
   }
@@ -89,6 +122,7 @@ async function readJson(request) {
 }
 
 const server = createServer(async (request, response) => {
+  let account;
   try {
     const url = new URL(request.url, 'http://localhost');
     const asset = assets.get(url.pathname);
@@ -97,6 +131,51 @@ const server = createServer(async (request, response) => {
       response.end(request.method === 'HEAD' ? undefined : asset.body);
       return;
     }
+    const token = sessionToken(request);
+    const authMode = url.pathname === '/api/auth/login' ? 'login' :
+      url.pathname === '/api/auth/register' ? 'register' : null;
+    if (authMode && request.method === 'POST') {
+      const input = await readJson(request);
+      const name = loginName(input?.username);
+      if (!name || !validPassword(input?.password)) {
+        throw new RequestError(400, '用户名需为 3–24 个字母、数字、下划线或连字符，密码至少 8 个字符。');
+      }
+      const forwardedIp = process.env.JADE_TRUST_PROXY === '1' ? request.headers['x-real-ip'] : undefined;
+      const remoteIp = String(forwardedIp ?? request.socket.remoteAddress).slice(0, 128);
+      if (!allowAuth(authMode === 'register' ? [['register:' + remoteIp, 15]] :
+        [['login:' + remoteIp, 60], ['account:' + remoteIp + ':' + name.key, 12]])) {
+        throw new RequestError(429, '操作过于频繁，请稍后重试。');
+      }
+      tick();
+      if (authMode === 'register') {
+        account = rooms.createAccount(name.name, await hashPassword(input.password));
+      } else {
+        const player = rooms.findAccount(name.key);
+        if (!await checkPassword(input.password, player?.credentials)) {
+          throw new RequestError(401, '用户名或密码错误。');
+        }
+        account = player;
+      }
+      const nextToken = rooms.signIn(account.id, token);
+      broadcast();
+      response.setHeader('Set-Cookie', cookie(request, nextToken, SESSION_SECONDS));
+      json(response, 200, rooms.snapshot(account.id));
+      return;
+    }
+
+    if (url.pathname === '/api/auth/logout' && request.method === 'POST') {
+      await readJson(request);
+      rooms.signOut(token);
+      broadcast();
+      response.setHeader('Set-Cookie', cookie(request, '', 0));
+      json(response, 200, { ok: true });
+      return;
+    }
+
+    if (!url.pathname.startsWith('/api/')) throw new RequestError(404, '页面不存在。');
+    account = rooms.session(token);
+    if (!account) throw new RequestError(401, '请先登录。');
+
     if (url.pathname === '/api/live' && request.method === 'GET') {
       tick();
       response.writeHead(200, {
@@ -104,30 +183,47 @@ const server = createServer(async (request, response) => {
         'Cache-Control': 'no-cache, no-transform',
         'X-Accel-Buffering': 'no',
       });
-      clients.add(response);
+      clients.set(response, token);
       response.on('close', () => clients.delete(response));
       response.write('retry: 2000\n\n');
-      sendSnapshot(response, rooms.snapshot());
+      sendSnapshot(response, rooms.snapshot(account.id));
       return;
     }
     if (url.pathname === '/api/state' && request.method === 'GET') {
       tick();
-      json(response, 200, rooms.snapshot());
+      json(response, 200, rooms.snapshot(account.id));
       return;
     }
     const ticket = /^\/api\/ticket\/(baccarat|dice)$/.exec(url.pathname);
     if (ticket && request.method === 'PUT') {
       const input = await readJson(request);
+      if (!rooms.session(token)) throw new RequestError(401, '请先登录。');
       tick();
-      const snapshot = rooms.setTicket(ticket[1], input);
-      broadcast(snapshot);
+      const snapshot = rooms.setTicket(account.id, ticket[1], input);
+      broadcast();
       json(response, 200, snapshot);
+      return;
+    }
+    if (url.pathname === '/api/admin' && request.method === 'GET') {
+      tick();
+      json(response, 200, rooms.adminState(account.id));
+      return;
+    }
+    if (url.pathname === '/api/admin/grants' && request.method === 'POST') {
+      if (account.role !== 'admin') throw new RequestError(403, '需要管理员权限。');
+      const input = await readJson(request);
+      if (!rooms.session(token)) throw new RequestError(401, '请先登录。');
+      tick();
+      rooms.grantPoints(account.id, input);
+      broadcast();
+      json(response, 200, rooms.adminState(account.id));
       return;
     }
     json(response, 404, { error: '页面不存在。' });
   } catch (error) {
     if (error instanceof RequestError) {
-      json(response, error.status, { error: error.message, state: rooms.snapshot() });
+      const snapshot = account && error.status === 409 ? rooms.snapshot(account.id) : undefined;
+      json(response, error.status, { error: error.message, state: snapshot });
     } else {
       console.error(error);
       if (response.headersSent) response.destroy();
@@ -142,7 +238,7 @@ server.on('close', () => {
 });
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
-    for (const response of clients) response.end();
+    for (const response of clients.keys()) response.end();
     server.close();
     server.closeAllConnections();
   });

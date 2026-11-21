@@ -23,6 +23,11 @@ let pending = false;
 let notice = '';
 let state = null;
 let connected = false;
+let stream;
+let mode = 'login';
+let authRevision = 0;
+let loginBusy = false;
+let pendingGrant;
 let receivedAt = 0;
 let timerView = '';
 const drafts = {};
@@ -111,6 +116,8 @@ function renderBoard() {
 
 function renderSlip() {
   $('balance').textContent = state ? format(state.balance) : '—';
+  $('session-name').textContent = state?.user.name ?? '';
+  $('admin-open').hidden = state?.user.role !== 'admin';
   $('chips').innerHTML = DENOMINATIONS.map(value => '<button type="button" class="chip" data-chip="' + value +
     '" aria-pressed="' + (denomination === value) + '" aria-label="' + value + ' 积分档位"><span>' +
     value + '</span></button>').join('');
@@ -193,6 +200,10 @@ function renderClock() {
 }
 
 function applySnapshot(next, confirmedGame) {
+  if (state && state.user.id !== next.user.id) {
+    state = null;
+    for (const name of Object.keys(drafts)) delete drafts[name];
+  }
   if (state && (next.revision < state.revision ||
       (next.revision === state.revision && next.serverTime < state.serverTime))) return;
   for (const name of Object.keys(GAMES)) {
@@ -203,10 +214,13 @@ function applySnapshot(next, confirmedGame) {
       drafts[name] = { stakes: { ...current.stakes } };
     }
   }
-  if (state && state.date !== next.date) notice = '北京时间已跨日，积分已重置。';
+  if (state && state.date !== next.date) notice = '北京时间已跨日，已发放今日积分。';
   state = next;
   receivedAt = performance.now();
   connected = true;
+  $('account-panel').hidden = true;
+  $('top-actions').hidden = false;
+  $('game-content').hidden = false;
   render();
 }
 
@@ -233,6 +247,7 @@ function updateBets(event) {
 async function confirmTicket() {
   if (!canUpdate() || sameStakes(selected(), room().stakes)) return;
   const activeGame = game;
+  const auth = authRevision;
   const { id, version } = room();
   const stakes = { ...selected() };
   pending = true;
@@ -246,6 +261,11 @@ async function confirmTicket() {
       signal: AbortSignal.timeout(8_000),
     });
     const result = await response.json();
+    if (auth !== authRevision) return;
+    if (response.status === 401) {
+      signedOut('登录已过期，请重新登录。');
+      return;
+    }
     if (!response.ok) {
       if (result.state) applySnapshot(result.state);
       notice = result.error ?? '提交失败，请稍后再试。';
@@ -254,7 +274,7 @@ async function confirmTicket() {
       notice = totalStake(stakes) ? '本局下注已确认。' : '下注已撤回，积分已返还。';
     }
   } catch {
-    notice = '提交结果未能确认，请核对已确认积分。';
+    if (auth === authRevision) notice = '提交结果未能确认，请核对已确认积分。';
   } finally {
     pending = false;
     render();
@@ -304,16 +324,183 @@ $('history-open').addEventListener('click', () => {
   renderHistory();
   $('history-dialog').showModal();
 });
-const stream = new EventSource('/api/live');
-stream.addEventListener('message', event => applySnapshot(JSON.parse(event.data)));
-stream.addEventListener('error', () => {
-  if (!connected) return;
+function signedOut(message = '') {
+  authRevision++;
+  stream?.close();
+  stream = undefined;
+  state = null;
   connected = false;
-  render();
+  pendingGrant = undefined;
+  notice = '';
+  for (const name of Object.keys(drafts)) delete drafts[name];
+  for (const id of ['admin-dialog', 'rules-dialog', 'history-dialog']) {
+    if ($(id).open) $(id).close();
+  }
+  $('account-panel').hidden = false;
+  $('top-actions').hidden = true;
+  $('game-content').hidden = true;
+  $('account-status').textContent = message;
+  $('password').value = '';
+}
+
+function openStream() {
+  stream?.close();
+  const live = new EventSource('/api/live');
+  stream = live;
+  live.addEventListener('message', event => {
+    if (stream === live) applySnapshot(JSON.parse(event.data));
+  });
+  live.addEventListener('signed-out', () => {
+    if (stream === live) signedOut('登录已过期或已在其他页面退出。');
+  });
+  live.addEventListener('error', async () => {
+    if (stream !== live) return;
+    connected = false;
+    render();
+    try {
+      const response = await fetch('/api/state', { signal: AbortSignal.timeout(5_000) });
+      if (stream === live && response.status === 401) signedOut('登录已过期，请重新登录。');
+    } catch { /* EventSource will reconnect. */ }
+  });
+}
+
+function chooseMode(next) {
+  if (loginBusy) return;
+  mode = next;
+  const registering = mode === 'register';
+  $('login-mode').setAttribute('aria-pressed', !registering);
+  $('register-mode').setAttribute('aria-pressed', registering);
+  $('account-title').textContent = registering ? '注册青玉桌' : '登录青玉桌';
+  $('account-submit').textContent = registering ? '注册并登录' : '登录';
+  $('password').autocomplete = registering ? 'new-password' : 'current-password';
+  $('account-hint').hidden = !registering;
+  $('account-status').textContent = '';
+}
+
+async function requestJson(url, body) {
+  const response = await fetch(url, {
+    ...(body === undefined ? {} : {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }),
+    signal: AbortSignal.timeout(8_000),
+  });
+  return { status: response.status, ok: response.ok, data: await response.json() };
+}
+
+$('login-mode').addEventListener('click', () => chooseMode('login'));
+$('register-mode').addEventListener('click', () => chooseMode('register'));
+$('account-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (loginBusy) return;
+  loginBusy = true;
+  $('account-submit').disabled = true;
+  $('account-status').textContent = '';
+  try {
+    const result = await requestJson('/api/auth/' + mode, {
+      username: $('username').value,
+      password: $('password').value,
+    });
+    if (!result.ok) $('account-status').textContent = result.data.error;
+    else {
+      authRevision++;
+      $('password').value = '';
+      applySnapshot(result.data);
+      openStream();
+    }
+  } catch {
+    $('account-status').textContent = '服务暂时不可用，请稍后重试。';
+  } finally {
+    loginBusy = false;
+    $('account-submit').disabled = false;
+  }
+});
+
+$('logout').addEventListener('click', async () => {
+  $('logout').disabled = true;
+  try {
+    const result = await requestJson('/api/auth/logout', {});
+    if (!result.ok) throw new Error();
+    signedOut('已退出登录。');
+  } catch {
+    notice = '退出请求未完成，请重试。';
+    renderSlip();
+  } finally {
+    $('logout').disabled = false;
+  }
+});
+
+function renderAdmin(data) {
+  const current = $('grant-account').value;
+  const options = data.players.map(player => {
+    const label = player.name + ' · ' + format(player.balance) + ' 积分';
+    return new Option(label, player.id, false, player.id === current);
+  });
+  $('grant-account').replaceChildren(new Option('选择一个账户', ''), ...options);
+  $('grant-history').replaceChildren(...data.grants.map(grant => {
+    const row = document.createElement('p');
+    row.className = 'grant-row';
+    row.textContent = clock.format(grant.time) + ' · ' + grant.actor + ' → ' + grant.player +
+      ' · +' + number.format(grant.points) + ' 积分';
+    return row;
+  }));
+  if (!data.grants.length) $('grant-history').textContent = '暂无发放记录。';
+  $('grant-submit').disabled = false;
+}
+
+$('admin-open').addEventListener('click', async () => {
+  $('grant-status').textContent = '正在读取账户…';
+  $('grant-submit').disabled = true;
+  $('admin-dialog').showModal();
+  try {
+    const result = await requestJson('/api/admin');
+    if (result.status === 401) return signedOut('登录已过期，请重新登录。');
+    if (!result.ok) return $('grant-status').textContent = result.data.error;
+    renderAdmin(result.data);
+    $('grant-status').textContent = '';
+  } catch {
+    $('grant-status').textContent = '账户列表暂时不可用。';
+  }
+});
+
+$('grant-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const playerId = $('grant-account').value;
+  const points = Number($('grant-points').value);
+  if (!playerId || !Number.isSafeInteger(points) || points < 1) {
+    $('grant-status').textContent = '请选择账户并输入正整数积分。';
+    return;
+  }
+  if (pendingGrant?.playerId !== playerId || pendingGrant?.points !== points) {
+    pendingGrant = { playerId, points, requestId: crypto.randomUUID() };
+  }
+  $('grant-submit').disabled = true;
+  $('grant-status').textContent = '正在发放…';
+  try {
+    const result = await requestJson('/api/admin/grants', pendingGrant);
+    if (result.status === 401) return signedOut('登录已过期，请重新登录。');
+    if (!result.ok) return $('grant-status').textContent = result.data.error;
+    pendingGrant = undefined;
+    $('grant-points').value = '';
+    renderAdmin(result.data);
+    $('grant-status').textContent = '积分已发放。';
+  } catch {
+    $('grant-status').textContent = '未收到确认。保持同一账户和金额重试，不会重复发放。';
+  } finally {
+    $('grant-submit').disabled = false;
+  }
 });
 
 setInterval(() => {
+  if (!state) return;
   if (timerView !== [canBet(), reveal()].join(',')) render();
   else renderClock();
 }, 200);
+
+const initialAuth = authRevision;
+requestJson('/api/state').then(result => {
+  if (initialAuth === authRevision && result.ok) {
+    applySnapshot(result.data);
+    openStream();
+  }
+}).catch(() => {});
 render();
