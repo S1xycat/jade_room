@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101812">
+  <meta name="description" content="个人积分游戏桌，包含百家乐与骰宝。">
+  <title>青玉桌 · 每日积分游戏</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%231f3d2c'/%3E%3Ctext x='24' y='36' text-anchor='middle' font-size='33' fill='%23edd39b'%3E%E2%99%A0%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="top-inner">
+      <div class="brand"><span class="brand-icon" aria-hidden="true">♠</span><span>青玉桌</span></div>
+      <div class="top-actions">
+        <button class="quiet-button" id="history-open" type="button">战绩</button>
+        <button class="quiet-button" id="rules-open" type="button">规则</button>
+        <div class="balance-box"><span class="balance-icon" aria-hidden="true">◈</span><div><span>今日积分</span><strong id="balance">1,000</strong></div></div>
+      </div>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="game-bar">
+      <nav class="game-tabs" aria-label="游戏平台">
+        <button class="game-tab" type="button" data-game="baccarat" aria-pressed="true"><span aria-hidden="true">♠</span>百家乐</button>
+        <button class="game-tab" type="button" data-game="dice" aria-pressed="false"><span aria-hidden="true">⚄</span>骰宝</button>
+      </nav>
+      <span class="daily-info">每天 00:00（北京时间）重置为 1,000 积分</span>
+    </div>
+    <div class="layout">
+      <section class="game-column" aria-labelledby="game-name">
+        <div class="table" id="table">
+          <div class="table-heading">
+            <h1 id="game-name">百家乐</h1>
+            <span class="round-note" id="round-note">等待发牌</span>
+          </div>
+          <div class="table-stage" id="stage"></div>
+          <p class="table-note" id="table-note" aria-live="polite"></p>
+        </div>
+        <div class="bets-panel">
+          <div class="section-head"><h2>下注区</h2><span>括号内为净赢倍数</span></div>
+          <div class="chip-row">
+            <p class="small-label">积分档位</p>
+            <div id="chips" class="chips"></div>
+          </div>
+          <div id="main-bets"></div>
+          <details id="advanced">
+            <summary>点数与组合 <span id="advanced-count"></span></summary>
+            <div id="side-bets"></div>
+          </details>
+        </div>
+      </section>
+      <aside class="sidebar" aria-label="积分和结算">
+        <section class="slip">
+          <div class="section-head"><h2>本局下注</h2><button class="text-button" id="clear" type="button">清空</button></div>
+          <div class="slip-lines" id="slip-lines"></div>
+          <div class="slip-total"><span>合计下注</span><strong id="stake-total">0 积分</strong></div>
+          <button class="play" id="play" type="button">确认下注并发牌</button>
+          <button class="practice" id="practice" type="button">免费练习</button>
+          <p class="status" id="status" role="status"></p>
+        </section>
+        <section class="settlement">
+          <div class="section-head"><h2>上局结算</h2><span id="last-round"></span></div>
+          <div id="settlement"></div>
+        </section>
+      </aside>
+    </div>
+    <footer>积分仅供游戏内使用 · 不支持充值、提现、转赠或兑换</footer>
+  </main>
+  <dialog id="rules-dialog" aria-labelledby="rules-title">
+    <div class="dialog-head"><h2 id="rules-title">玩法规则</h2><form method="dialog"><button class="quiet-button" type="submit">关闭</button></form></div>
+    <div id="rules-content" class="dialog-content"></div>
+  </dialog>
+  <dialog id="history-dialog" aria-labelledby="history-title">
+    <div class="dialog-head"><h2 id="history-title">最近战绩</h2><form method="dialog"><button class="quiet-button" type="submit">关闭</button></form></div>
+    <div id="history-content" class="dialog-content"></div>
+  </dialog>
+  <noscript><p class="noscript">请开启 JavaScript 后游玩。</p></noscript>
+</body>
+</html>
