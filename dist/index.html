@@ -7,8 +7,8 @@
   <meta name="description" content="个人积分游戏桌，包含百家乐与骰宝。">
   <title>青玉桌 · 每日积分游戏</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%231f3d2c'/%3E%3Ctext x='24' y='36' text-anchor='middle' font-size='33' fill='%23edd39b'%3E%E2%99%A0%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./style.css?v=round20">
-  <script type="module" src="./app.js?v=round20"></script>
+  <link rel="stylesheet" href="./style.css?v=slip1">
+  <script type="module" src="./app.js?v=slip1"></script>
 </head>
 <body>
   <header class="topbar">
@@ -64,6 +64,25 @@
           <div class="table-stage" id="stage"></div>
           <p class="table-note" id="table-note" aria-live="polite"></p>
         </div>
+        <section class="slip" aria-labelledby="slip-title">
+          <div class="slip-toolbar">
+            <div class="slip-total">
+              <h2 id="slip-title">本局下注</h2>
+              <strong id="stake-total">0 积分</strong>
+              <span class="confirmed" id="confirmed"></span>
+              <span class="slip-clock" id="slip-clock"></span>
+            </div>
+            <div class="slip-actions">
+              <details class="slip-details" id="slip-details" hidden>
+                <summary class="text-button" id="slip-details-label">明细</summary>
+                <div class="slip-lines" id="slip-lines"></div>
+              </details>
+              <button class="text-button" id="clear" type="button" hidden>清空</button>
+              <button class="play" id="play" type="button">确认下注</button>
+            </div>
+          </div>
+          <p class="status" id="status" role="status"></p>
+        </section>
         <div class="bets-panel">
           <div class="section-head"><h2>下注区</h2><span>括号内为净赢倍数</span></div>
           <div class="chip-row">
@@ -77,15 +96,7 @@
           </section>
         </div>
       </section>
-      <aside class="sidebar" aria-label="积分和结算">
-        <section class="slip">
-          <div class="section-head"><h2>本局下注</h2><button class="text-button" id="clear" type="button">清空</button></div>
-          <div class="slip-lines" id="slip-lines"></div>
-          <div class="slip-total"><span>当前选择</span><strong id="stake-total">0 积分</strong></div>
-          <button class="play" id="play" type="button">确认本局下注</button>
-          <p class="confirmed" id="confirmed"></p>
-          <p class="status" id="status" role="status"></p>
-        </section>
+      <aside class="sidebar" aria-label="结算">
         <section class="settlement">
           <div class="section-head"><h2>上局结算</h2><span id="last-round"></span></div>
           <div id="settlement"></div>

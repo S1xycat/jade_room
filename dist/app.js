@@ -120,19 +120,26 @@ function renderSlip() {
   $('chips').innerHTML = DENOMINATIONS.map(value => '<button type="button" class="chip" data-chip="' + value +
     '" aria-pressed="' + (denomination === value) + '" aria-label="' + value + ' 积分档位"><span>' +
     value + '</span></button>').join('');
+  const entries = Object.entries(selected());
   const total = staked();
-  $('slip-lines').innerHTML = total ? Object.entries(selected()).map(([id, value]) =>
+  const saved = confirmed();
+  const matches = sameStakes(selected(), room()?.stakes ?? {});
+  $('slip-details').hidden = !entries.length;
+  if (!entries.length) $('slip-details').open = false;
+  $('slip-details-label').textContent = '明细 ' + entries.length;
+  $('slip-lines').innerHTML = entries.map(([id, value]) =>
     '<div class="slip-line"><span>' + betName(game, id) + '</span><strong>' + format(value) +
     '</strong><button type="button" data-remove="' + id + '" aria-label="移除' + betName(game, id) +
-    '"' + (canUpdate() ? '' : ' disabled') + '>×</button></div>').join('') : emptyMessage('选择积分档位，再点选下注项。');
+    '"' + (canUpdate() ? '' : ' disabled') + '>×</button></div>').join('');
   $('stake-total').textContent = format(total) + ' 积分';
-  $('clear').disabled = !total || !canUpdate();
-  $('play').disabled = !canUpdate() || sameStakes(selected(), room()?.stakes ?? {}) ||
-    total > (state?.balance ?? 0) + confirmed();
-  $('play').textContent = pending ? '正在提交…' : total || !confirmed() ? '确认本局下注' : '确认撤回下注';
-  $('confirmed').textContent = connected
-    ? '已确认 ' + format(confirmed()) + ' 积分 · ' + (confirmed() ? '开奖时自动结算' : '可直接观看开奖') : '正在连接实时牌桌';
-  $('status').textContent = notice || (state && state.balance + confirmed() < 1_000 ? '余额不足 10 积分，仍可观看。' : '');
+  $('clear').hidden = !total;
+  $('clear').disabled = !canUpdate();
+  $('play').disabled = !canUpdate() || matches || total > (state?.balance ?? 0) + saved;
+  $('play').textContent = pending ? '提交中…' : !connected ? '连接中' : !canBet() ? '已封盘' :
+    matches && saved ? '已确认' : total || !saved ? '确认下注' : '确认撤回';
+  $('confirmed').textContent = saved && (!matches || !canBet()) ? '已确认 ' + format(saved) + ' 积分' : '';
+  $('status').textContent = notice;
+
 }
 
 function renderSettlement(round) {
@@ -192,6 +199,8 @@ function renderClock() {
   $('round-clock').textContent = connected && active
     ? secondsUntil(canBet() ? active.closesAt : active.revealAt) + ' 秒' : '—';
   $('round-clock').setAttribute('aria-label', canBet() ? '距离封盘' : '距离开奖');
+  $('slip-clock').textContent = connected && active
+    ? (canBet() ? '封盘 ' : '开奖 ') + secondsUntil(canBet() ? active.closesAt : active.revealAt) + ' 秒' : '';
   for (const name of Object.keys(GAMES)) {
     $(name + '-clock').textContent = connected ? secondsUntil(state.rooms[name].revealAt) + '秒' : '';
   }
@@ -212,6 +221,10 @@ function applySnapshot(next, confirmedGame) {
     if (current.id !== previous?.id || name === confirmedGame || !edited) {
       drafts[name] = { stakes: { ...current.stakes } };
     }
+  }
+  if (state && state.rooms[game].id !== next.rooms[game].id) {
+    $('slip-details').open = false;
+    notice = '';
   }
   if (state && state.date !== next.date) notice = '北京时间已跨日，已发放今日积分。';
   state = next;
@@ -270,7 +283,8 @@ async function confirmTicket() {
       notice = result.error ?? '提交失败，请稍后再试。';
     } else {
       applySnapshot(result, activeGame);
-      notice = totalStake(stakes) ? '本局下注已确认。' : '下注已撤回，积分已返还。';
+      if (!totalStake(stakes) && room()?.id === id) notice = '已撤回，积分已返还。';
+      $('slip-details').open = false;
     }
   } catch {
     if (auth === authRevision) notice = '提交结果未能确认，请核对已确认积分。';
@@ -284,6 +298,7 @@ document.querySelector('.game-tabs').addEventListener('click', event => {
   const button = event.target.closest('[data-game]');
   if (!button || pending || game === button.dataset.game) return;
   game = button.dataset.game;
+  $('slip-details').open = false;
   notice = '';
   render();
 });
@@ -304,7 +319,8 @@ $('slip-lines').addEventListener('click', event => {
   notice = '';
   renderBoard();
   renderSlip();
-  restoreButton('data-bet', button.dataset.remove);
+  const nextControl = $('slip-lines').querySelector('button') ?? $('play');
+  nextControl.focus({ preventScroll: true });
 });
 $('clear').addEventListener('click', () => {
   if (!canUpdate()) return;
