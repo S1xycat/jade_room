@@ -1,6 +1,4 @@
-import { BETS, DENOMINATIONS, GAMES, TABLES, cardRank, dayKey, onDay, playRound } from './rules.js';
-
-const STORAGE_KEY = 'jade-table/v1';
+import { BETS, DENOMINATIONS, GAMES, TABLES, cardRank } from './rules.js';
 const $ = id => document.getElementById(id);
 const number = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 });
 const clock = new Intl.DateTimeFormat('zh-CN', {
@@ -23,30 +21,22 @@ let game = 'baccarat';
 let denomination = 10;
 let pending = false;
 let notice = '';
-let drafts = { baccarat: {}, dice: {} };
-let state = onDay(null);
-
-function readState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return onDay(raw ? JSON.parse(raw) : null);
-}
-
-function syncState() {
-  const previousDay = state.day;
-  try {
-    state = readState();
-  } catch {
-    notice = '无法读取浏览器存储，请检查站点存储权限。';
-  }
-  if (previousDay !== state.day) {
-    drafts = { baccarat: {}, dice: {} };
-    notice = '新一天已开始，积分已重置。';
-  }
-}
-
-const selected = () => drafts[game];
-const staked = () => Object.values(selected()).reduce((sum, value) => sum + value, 0);
-const lastRound = () => state.history.find(item => item.game === game);
+let state = null;
+let connected = false;
+let receivedAt = 0;
+let timerView = '';
+const drafts = {};
+const totalStake = stakes => Object.values(stakes).reduce((sum, value) => sum + value, 0);
+const sameStakes = (first, second) => Object.keys(first).length === Object.keys(second).length &&
+  Object.entries(first).every(([id, amount]) => second[id] === amount);
+const room = () => state?.rooms[game];
+const selected = () => drafts[game]?.stakes ?? {};
+const staked = () => totalStake(selected());
+const confirmed = () => totalStake(room()?.stakes ?? {});
+const serverTime = () => state ? state.serverTime + (performance.now() - receivedAt) : 0;
+const canBet = () => connected && room()?.phase === 'open' && serverTime() < room().closesAt;
+const canUpdate = () => canBet() && !pending;
+const reveal = () => Boolean(room()?.latest && room().latest.time === room().startsAt && serverTime() < room().startsAt + 5_000);
 const betName = (currentGame, id) => {
   const item = BETS[currentGame][id];
   if (id.startsWith('playerPoint:')) return '闲最终 ' + item.label;
@@ -92,8 +82,8 @@ function renderStage(round) {
   const outcome = round?.outcome;
   $('table').dataset.game = game;
   $('game-name').textContent = GAMES[game].name;
-  $('round-note').textContent = round ? (round.staked ? '第 ' + round.id + ' 局' : '练习局') : '等待' + GAMES[game].action;
-  $('table-note').textContent = round ? outcomeText(round) : GAMES[game].prompt;
+  $('table-note').textContent = round ? '第 ' + round.id + ' 局 · ' + outcomeText(round) :
+    canBet() ? '选好下注后请确认，封盘后由系统自动开奖。' : '结果将在倒计时结束时公布。';
   if (game === 'baccarat') {
     $('stage').innerHTML = handMarkup('闲', outcome?.player, outcome?.playerPoint, 'player-hand') +
       '<span class="versus" aria-hidden="true">♦</span>' +
@@ -107,7 +97,7 @@ function betMarkup(item) {
   const current = selected()[item.id] ?? 0;
   return '<button type="button" class="bet ' + item.tone + '" data-bet="' + item.id + '" aria-label="' +
     betName(game, item.id) + '，净赢 ' + profitText(item) + (current ? '，已下注 ' + format(current) + ' 积分' : '') +
-    '" aria-pressed="' + Boolean(current) + '"><span>' + item.label + ' <small>（' + profitText(item) +
+    '" aria-pressed="' + Boolean(current) + '"' + (canUpdate() ? '' : ' disabled') + '><span>' + item.label + ' <small>（' + profitText(item) +
     '）</small></span>' + (current ? '<b>' + format(current) + '</b>' : '') + '</button>';
 }
 
@@ -120,7 +110,7 @@ function renderBoard() {
 }
 
 function renderSlip() {
-  $('balance').textContent = format(state.balance);
+  $('balance').textContent = state ? format(state.balance) : '—';
   $('chips').innerHTML = DENOMINATIONS.map(value => '<button type="button" class="chip" data-chip="' + value +
     '" aria-pressed="' + (denomination === value) + '" aria-label="' + value + ' 积分档位"><span>' +
     value + '</span></button>').join('');
@@ -128,25 +118,28 @@ function renderSlip() {
   $('slip-lines').innerHTML = total ? Object.entries(selected()).map(([id, value]) =>
     '<div class="slip-line"><span>' + betName(game, id) + '</span><strong>' + format(value) +
     '</strong><button type="button" data-remove="' + id + '" aria-label="移除' + betName(game, id) +
-    '">×</button></div>').join('') : emptyMessage('选择积分档位，再点选下注项。');
+    '"' + (canUpdate() ? '' : ' disabled') + '>×</button></div>').join('') : emptyMessage('选择积分档位，再点选下注项。');
   $('stake-total').textContent = format(total) + ' 积分';
-  $('clear').disabled = !total || pending;
-  $('play').disabled = !total || pending || total > state.balance;
-  $('play').textContent = '确认下注并' + GAMES[game].action;
-  $('practice').disabled = pending;
-  $('status').textContent = notice || (state.balance < 1000 ? '余额低于 10 积分，仍可免费练习。' : '');
+  $('clear').disabled = !total || !canUpdate();
+  $('play').disabled = !canUpdate() || sameStakes(selected(), room()?.stakes ?? {}) ||
+    total > (state?.balance ?? 0) + confirmed();
+  $('play').textContent = pending ? '正在提交…' : total || !confirmed() ? '确认本局下注' : '确认撤回下注';
+  $('confirmed').textContent = connected
+    ? '已确认 ' + format(confirmed()) + ' 积分 · ' + (confirmed() ? '开奖时自动结算' : '可直接观看开奖') : '正在连接实时牌桌';
+  $('status').textContent = notice || (state && state.balance + confirmed() < 1_000 ? '余额不足 10 积分，仍可观看。' : '');
 }
 
 function renderSettlement(round) {
-  $('last-round').textContent = round?.staked ? '第 ' + round.id + ' 局' : round ? '练习局' : '';
-  $('settlement').innerHTML = !round ? emptyMessage('本桌还没有结算。') : !round.staked
-    ? emptyMessage('练习局不扣除或返还积分。')
-    : '<div class="settlement-total"><span>净变动</span><strong class="' + tone(round.net) + '">' +
+  $('last-round').textContent = round ? '第 ' + round.id + ' 局' : '';
+  $('settlement').innerHTML = !round ? emptyMessage('等待本桌首次开奖。') :
+    '<p class="settled-outcome">' + outcomeText(round) + '</p>' +
+    (!round.staked ? emptyMessage('本局没有已确认的下注。') :
+      '<div class="settlement-total"><span>净变动</span><strong class="' + tone(round.net) + '">' +
       signed(round.net) + '</strong></div>' + round.lines.map(line =>
       '<div class="settlement-line"><span>' + betName(game, line.id) + '</span><span class="' +
       tone(line.returned - line.amount) + '">' + statusNames[line.status] + ' · 返还 ' + format(line.returned) +
       ' · 净变动 ' + signed(line.returned - line.amount) + '</span></div>').join('') +
-      '<div class="settlement-foot">下注 ' + format(round.staked) + ' · 总返还 ' + format(round.returned) + '</div>';
+      '<div class="settlement-foot">下注 ' + format(round.staked) + ' · 总返还 ' + format(round.returned) + '</div>');
 }
 
 function renderRules() {
@@ -159,7 +152,8 @@ function renderRules() {
 }
 
 function renderHistory() {
-  $('history-content').innerHTML = state.history.length ? state.history.map(round => {
+  const history = state?.history ?? [];
+  $('history-content').innerHTML = history.length ? history.map(round => {
     const lines = round.lines.map(line => '<div class="settlement-line"><span>' + betName(round.game, line.id) +
       '</span><span>' + statusNames[line.status] + ' · 下注 ' + format(line.amount) + ' · 返还 ' +
       format(line.returned) + ' · 净变动 ' + signed(line.returned - line.amount) + '</span></div>').join('');
@@ -167,19 +161,53 @@ function renderHistory() {
       clock.format(round.time) + '</small></span><strong class="' + tone(round.net) + '">' +
       (round.staked ? signed(round.net) + ' 积分' : '练习') + '</strong></summary><div><p>' +
       outcomeText(round) + '</p>' + lines + '</div></details>';
-  }).join('') : emptyMessage('完成第一局后，战绩会显示在这里。');
+  }).join('') : emptyMessage('已确认的下注结算后，战绩会显示在这里。');
 }
 
 function render() {
-  const round = lastRound();
-  document.querySelectorAll('[data-game]').forEach(button => {
-    if (button.matches('button')) button.setAttribute('aria-pressed', button.dataset.game === game);
-  });
-  renderStage(round);
+  document.querySelectorAll('button[data-game]').forEach(button =>
+    button.setAttribute('aria-pressed', button.dataset.game === game));
+  renderStage(reveal() ? room().latest : undefined);
   renderBoard();
   renderSlip();
-  renderSettlement(round);
+  renderSettlement(room()?.latest);
   if ($('history-dialog').open) renderHistory();
+  renderClock();
+}
+
+function secondsUntil(time) {
+  return Math.max(0, Math.ceil((time - serverTime()) / 1_000));
+}
+
+function renderClock() {
+  const phase = !connected ? '正在连接' : !canBet() ? '已封盘 · 等待开奖' : '开放下注';
+  const active = room();
+  $('round-note').textContent = active ? '第 ' + active.id + ' 局 · ' + phase : phase;
+  $('round-clock').textContent = connected && active
+    ? secondsUntil(canBet() ? active.closesAt : active.revealAt) + ' 秒' : '—';
+  $('round-clock').setAttribute('aria-label', canBet() ? '距离封盘' : '距离开奖');
+  for (const name of Object.keys(GAMES)) {
+    $(name + '-clock').textContent = connected ? secondsUntil(state.rooms[name].revealAt) + '秒' : '';
+  }
+  timerView = [canBet(), reveal()].join(',');
+}
+
+function applySnapshot(next, confirmedGame) {
+  if (state && (next.revision < state.revision ||
+      (next.revision === state.revision && next.serverTime < state.serverTime))) return;
+  for (const name of Object.keys(GAMES)) {
+    const current = next.rooms[name];
+    const previous = state?.rooms[name];
+    const edited = previous && drafts[name] && !sameStakes(drafts[name].stakes, previous.stakes);
+    if (current.id !== previous?.id || name === confirmedGame || !edited) {
+      drafts[name] = { stakes: { ...current.stakes } };
+    }
+  }
+  if (state && state.date !== next.date) notice = '北京时间已跨日，积分已重置。';
+  state = next;
+  receivedAt = performance.now();
+  connected = true;
+  render();
 }
 
 function restoreButton(attribute, value) {
@@ -189,11 +217,10 @@ function restoreButton(attribute, value) {
 
 function updateBets(event) {
   const button = event.target.closest('[data-bet]');
-  if (!button || pending) return;
+  if (!button || !canUpdate()) return;
   notice = '';
-  syncState();
-  if (staked() + denomination * 100 > state.balance) {
-    notice = '积分不足，请减少下注或选择免费练习。';
+  if (staked() + denomination * 100 > state.balance + confirmed()) {
+    notice = '可用积分不足，请减少下注。';
   } else {
     const id = button.dataset.bet;
     selected()[id] = (selected()[id] ?? 0) + denomination * 100;
@@ -203,30 +230,31 @@ function updateBets(event) {
   restoreButton('data-bet', button.dataset.bet);
 }
 
-async function finishRound(practice) {
-  if (pending || (!practice && !staked())) return;
+async function confirmTicket() {
+  if (!canUpdate() || sameStakes(selected(), room().stakes)) return;
   const activeGame = game;
-  const draft = practice ? {} : { ...selected() };
-  const betDay = state.day;
+  const { id, version } = room();
+  const stakes = { ...selected() };
   pending = true;
   notice = '';
   renderSlip();
-  const commit = () => {
-    const current = readState();
-    if (!practice && current.day !== betDay) throw new Error('新一天已开始，请重新选择下注。');
-    const next = playRound(current, activeGame, draft);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    if (current.day !== state.day) drafts = { baccarat: {}, dice: {} };
-    state = next;
-    if (!practice) drafts[activeGame] = {};
-  };
   try {
-    if (navigator.locks) await navigator.locks.request(STORAGE_KEY, commit);
-    else commit();
-    notice = practice ? '练习局已完成。' : '本局已结算，余额已更新。';
-  } catch (error) {
-    syncState();
-    notice = error instanceof DOMException ? '无法保存战绩，请检查站点存储权限。' : error.message;
+    const response = await fetch('/api/ticket/' + activeGame, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roundId: id, version, stakes }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      if (result.state) applySnapshot(result.state);
+      notice = result.error ?? '提交失败，请稍后再试。';
+    } else {
+      applySnapshot(result, activeGame);
+      notice = totalStake(stakes) ? '本局下注已确认。' : '下注已撤回，积分已返还。';
+    }
+  } catch {
+    notice = '提交结果未能确认，请核对已确认积分。';
   } finally {
     pending = false;
     render();
@@ -239,7 +267,6 @@ document.querySelector('.game-tabs').addEventListener('click', event => {
   game = button.dataset.game;
   $('advanced').open = false;
   notice = '';
-  syncState();
   render();
 });
 $('main-bets').addEventListener('click', updateBets);
@@ -254,7 +281,7 @@ $('chips').addEventListener('click', event => {
 });
 $('slip-lines').addEventListener('click', event => {
   const button = event.target.closest('[data-remove]');
-  if (!button || pending) return;
+  if (!button || !canUpdate()) return;
   delete selected()[button.dataset.remove];
   notice = '';
   renderBoard();
@@ -262,13 +289,13 @@ $('slip-lines').addEventListener('click', event => {
   restoreButton('data-bet', button.dataset.remove);
 });
 $('clear').addEventListener('click', () => {
-  drafts[game] = {};
+  if (!canUpdate()) return;
+  drafts[game] = { stakes: {} };
   notice = '';
   renderBoard();
   renderSlip();
 });
-$('play').addEventListener('click', () => finishRound(false));
-$('practice').addEventListener('click', () => finishRound(true));
+$('play').addEventListener('click', confirmTicket);
 $('rules-open').addEventListener('click', () => {
   renderRules();
   $('rules-dialog').showModal();
@@ -277,22 +304,16 @@ $('history-open').addEventListener('click', () => {
   renderHistory();
   $('history-dialog').showModal();
 });
-window.addEventListener('storage', event => {
-  if (event.key === STORAGE_KEY || event.key === null) {
-    syncState();
-    render();
-  }
+const stream = new EventSource('/api/live');
+stream.addEventListener('message', event => applySnapshot(JSON.parse(event.data)));
+stream.addEventListener('error', () => {
+  if (!connected) return;
+  connected = false;
+  render();
 });
-window.addEventListener('focus', () => {
-  const previous = state;
-  syncState();
-  if (previous.day !== state.day || previous.history[0]?.id !== state.history[0]?.id) render();
-});
+
 setInterval(() => {
-  if (state.day !== dayKey(Date.now())) {
-    syncState();
-    render();
-  }
-}, 1000);
-syncState();
+  if (timerView !== [canBet(), reveal()].join(',')) render();
+  else renderClock();
+}, 200);
 render();

@@ -1,1 +1,9 @@
-{"private":true,"type":"module","scripts":{"test":"node check.mjs"}}
+{
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node check.mjs && node server/check.mjs"
+  }
+}

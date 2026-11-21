@@ -104,11 +104,9 @@ h3 { font-size: 1rem; }
 .slip-total { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; margin-bottom: 12px; }
 .slip-total span, .settlement-total span { color: var(--muted); }
 .slip-total strong { color: var(--gold); }
-.play, .practice { width: 100%; min-height: 43px; border: 1px solid var(--line); border-radius: 8px; font-weight: 750; }
+.play { width: 100%; min-height: 43px; border: 1px solid var(--line); border-radius: 8px; font-weight: 750; }
 .play { background: #f0d49a; color: #241b11; border-color: #f0d49a; }
 .play:hover:enabled { background: #ffe3a8; }
-.practice { background: transparent; color: var(--text); margin-top: 8px; }
-.practice:hover:enabled { background: var(--panel-raised); }
 .status { color: var(--gold); font-size: .875rem; line-height: 1.5; }
 .status:not(:empty) { margin-top: 9px; }
 .settlement-total { display: flex; justify-content: space-between; padding-bottom: 8px; }
@@ -158,3 +156,9 @@ dialog::backdrop { background: #070c08c4; }
   .slip { order: 2; }
   .settlement { order: 3; }
 }
+.game-tab small { font-size: .8rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+.round-clock { display: grid; gap: 3px; justify-items: end; }
+.round-clock strong { color: var(--gold); font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.confirmed, .settled-outcome { color: var(--muted); font-size: .9rem; line-height: 1.5; }
+.confirmed { margin-top: 8px; }
+.settled-outcome { margin-bottom: 8px; }
